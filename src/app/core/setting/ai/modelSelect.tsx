@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import useSettingStore from "@/stores/setting";
 import { Input } from "@/components/ui/input";
 import { createOpenAIClient } from "@/lib/ai";
@@ -28,6 +28,7 @@ export default function ModelSelect(
   const [list, setList] = useState<OpenAI.Models.Model[]>([])
   const [open, setOpen] = useState(false)
   const [inputValue, setInputValue] = useState<string>("") 
+  const currentRequestIdRef = useRef<number>(0)
   
   // 检查输入的模型是否存在于列表中
   const modelExists = (value: string) => {
@@ -39,7 +40,12 @@ export default function ModelSelect(
     const aiModelList = await store.get<AiConfig[]>('aiModelList')
     const model = aiModelList?.find(item => item.key === currentAi)
     if (!model) return
-    const models = await getModels(model)
+    
+    const requestId = ++currentRequestIdRef.current
+    const models = await getModels(model, requestId)
+    
+    if (requestId !== currentRequestIdRef.current) return
+    
     if (!models) return
     setList(models)
     
@@ -49,17 +55,27 @@ export default function ModelSelect(
   }
 
   // 获取模型列表
-  async function getModels(model: AiConfig) {
+  async function getModels(model: AiConfig, requestId: number) {
     try {
       setLoading(true)
+      if (requestId !== currentRequestIdRef.current) return null;
+      
       const openai = await createOpenAIClient(model)
+      
+      if (requestId !== currentRequestIdRef.current) return null;
+      
       const models = await openai.models.list()
+      
+      if (requestId !== currentRequestIdRef.current) return null;
+      
       const uniqueModels = models.data.filter((model, index) => models.data.findIndex(m => m.id === model.id) === index)
       return uniqueModels
     } catch {
       return []
     } finally {
-      setLoading(false)
+      if (requestId === currentRequestIdRef.current) {
+        setLoading(false)
+      }
     }
   }
 
@@ -76,12 +92,8 @@ export default function ModelSelect(
   }
 
   const handleSelectOrCreate = (value: string) => {
-    // 只用于列表中的已有模型选择
-    // 关闭弹窗并更新模型
     setOpen(false)
-    setTimeout(() => {
-      syncModelList(value)
-    }, 0)
+    syncModelList(value)
   }
 
   const handleInputChange = (value: string) => {
@@ -91,12 +103,8 @@ export default function ModelSelect(
 
   const handleCustomValue = () => {
     if (inputValue.trim()) {
-      // 先关闭弹窗，再同步更新model，避免渲染冲突
       setOpen(false)
-      // 等待下一个事件循环再更新model值
-      setTimeout(() => {
-        syncModelList(inputValue)
-      }, 0)
+      syncModelList(inputValue)
     }
   }
 
@@ -121,6 +129,8 @@ export default function ModelSelect(
   useEffect(() => {
     setList([])
     setInputValue('')
+    // Increment the request ID to cancel any in-progress requests
+    currentRequestIdRef.current++;
     initModelList()
   }, [currentAi])
   
